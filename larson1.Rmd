@@ -221,6 +221,30 @@ print(rmse_model2)
 print(rmse_huber)
 ```
 
+Combining Plots
+```{r}
+ggplot()+
+  geom_point(results, mapping=aes(x=pred,y=actual), color="#0000ffbe", size=2)+
+  geom_point(results_huber, mapping=aes(x=pred,y=actual), color="#04c595d4", size =2)+
+  xlab("Predicted")+ylab("Observed")+
+  geom_abline(intercept=0,slope=1,col="#070404")+
+  theme(
+    axis.title = element_text(size=24),
+    axis.text = element_text(size=15),
+    axis.ticks = element_blank(),
+    panel.grid.major = element_line(linewidth=0.55,color="grey"),
+    panel.grid.minor = element_line(linewidth=0.25,color="grey"),
+    axis.line = element_line(linewidth=0.75, color="grey")
+  )
+
+```
+
+
+
+
+
+
+
 
 Numerical-Only Model
 ```{r}
