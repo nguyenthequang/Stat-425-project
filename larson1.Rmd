@@ -1,0 +1,318 @@
+---
+title: "Aussie Cars"
+output: html_document
+date: "2023-11-30"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Data:
+
+```{r cars}
+library(tidyverse)
+data <- read_csv("C:/Users/Zach/Larson Desktop/Fall 2023 Desktop/STAT 425/Project/Austrailian Vehicle Prices/Australian Vehicle Prices.csv",show_col_types = FALSE)
+```
+
+_____________________________________
+
+IDEAS
+
+1) Determine what features are the most predictive of car price --> Maximize the R2 using all the features, plus transformations (include logic for why each feature is included, and how it is included)
+2) Using Backward Elimination and Mallow's Cp, fit a parsimonious model
+3) Using Ridge Regression
+
+Do the same with 2 other brands of car
+Compare feature relavance between car brands
+
+
+Brands Listed
+```{r}
+used <- data %>% filter(UsedOrNew=="USED")
+
+brands <- used %>% drop_na(Price) %>% group_by(Brand) %>% summarize(count=n(), ave_price = mean(Price)) %>% arrange(desc(count))
+brands
+```
+
+
+Could choose 3 brands with average prices very different:
+Low-price: Kia
+Mid-Price: Toyota
+High Price: Mercedes-Benz
+
+
+1) Filtering by brand
+```{r}
+toyota <- data %>% filter(Brand==brands$Brand[1])
+benz <- data %>% filter(Brand==brands$Brand[10])
+```
+
+
+```{r}
+benz2 <- benz %>%
+  mutate(KM = as.numeric(Kilometres))
+
+rough_lm <- lm(data=benz2, 
+               Price ~ KM+
+                       factor(BodyType))
+summary(rough_lm)
+plot(rough_lm)
+```
+
+
+______________________________________________________________________________________________
+
+Now for Model Building
+```{r}
+View(benz)
+```
+
+Model Preprocessing
+
+1) Null Values
+Characters that signify null: 
+"-"
+"- / -"
+
+```{r}
+data2 <- read_csv(
+            "C:/Users/Zach/Larson Desktop/Fall 2023 Desktop/STAT 425/Project/Austrailian Vehicle Prices/Australian Vehicle Prices.csv",
+            show_col_types = FALSE,
+            na = c("-","- / -","")
+          )
+
+benz2 <- data2 %>% filter(Brand=="Mercedes-Benz")
+View(benz2)
+```
+2) Dropping Columns to not use
+```{r}
+benz3 <- subset(benz2, select = -c(`Brand`, `Model`,`Title`))
+```
+
+3) Transforming Data 
+
+```{r}
+benz4 <- benz3 %>%
+  mutate("Power 1" = str_extract_all(Engine, "\\d+\\.\\d+|\\d+"),
+         "Fuel Consumption 2" = as.numeric(str_extract(FuelConsumption, "\\d+\\.\\d+|\\d+")),
+         "Kilometres 2" = as.numeric(Kilometres),
+         "ExteriorColor" = str_extract(ColourExtInt, "\\w+"),
+         "State" = str_extract(Location, "[A-Z][A-Z]+"),
+         "Cylinders" = unlist(str_extract(CylindersinEngine,"\\d+")),
+         "Age" = 2023 - Year
+         ) %>%
+  unnest_wider(`Power 1`, names_sep="v") %>%
+  mutate("Power 2" = as.numeric(`Power 1v2`)) %>%
+  select(-c(Engine,FuelConsumption,ColourExtInt,Location,CylindersinEngine,`Car/Suv`,`Power 1v1`,`Power 1v2`,`Kilometres`,Year)) %>%
+  rename("Power" = `Power 2`,
+         "FuelConsumption" = `Fuel Consumption 2`,
+         "Kilometers" = `Kilometres 2`
+         )
+  
+```
+
+
+
+4) Dropping Null Values and any last columns without much variation
+```{r}
+sapply(benz4, function(x) sum(is.na(x)))
+benz5 <- benz4 %>% drop_na()
+sapply(benz5, function(x) sum(is.na(x)))
+
+benz5 %>% group_by(Transmission) %>% summarize(count = n())
+benz5 %>% group_by(UsedOrNew) %>% summarize(count = n())
+benz6 <- subset(benz5, select = -c(Transmission,UsedOrNew))
+```
+
+
+Spltting data into train and test
+```{r}
+set.seed(1)
+
+sample <- sample(c(TRUE,FALSE), nrow(benz6), replace=TRUE, prob=c(0.7,0.3))
+
+train <- benz6[sample,]
+test <- benz6[!sample,]
+```
+
+Fitting first Model
+```{r}
+model1 <- lm(data=train, Price ~ .)
+summary(model1)
+```
+```{r}
+plot(model1)
+```
+```{r}
+library(MASS)
+boxcox(model1)
+
+```
+
+```{r}
+model1b <- lm(data=train, log(Price) ~ .)
+summary(model1b)
+plot(model1b)
+```
+
+Cannot train/test this data well since too many categorical variables to generalize
+It is also very overfitted
+Need to determine the most important features
+________________________________________________________
+
+Forward Selection
+Criterion: AIC
+Will iterate until no significantly significant decrease in AIC
+
+
+```{r}
+intercept_only <- lm(data=train, log(Price) ~ 1)
+forward <- step(intercept_only, direction='forward',scope=formula(model1b),trace=0)
+forward$anova
+```
+
+Reduced model
+```{r}
+model2a <- lm(data=train, log(Price) ~ Age+Cylinders+Kilometers+DriveType+BodyType+FuelType+Seats+ExteriorColor+FuelConsumption+State+Doors)
+summary(model2a)
+```
+
+```{r}
+model2 <- lm(data=train, log(Price) ~ Age+Cylinders+Kilometers+DriveType)
+summary(model2)
+```
+
+Now to test
+```{r}
+pred2 <- predict(model2, test)
+results = data.frame(pred = exp(pred2), actual = test$Price)
+
+ggplot(results, aes(x=pred,y=actual))+
+  geom_point()+xlab("Predicted")+ylab("Observed")+
+  geom_abline(intercept=0,slope=1,col="red")
+```
+
+Trying Huber's method, Robust to Outliers
+```{r}
+library(MASS)
+huber1 <- rlm(log(Price) ~ Kilometers+Cylinders+Age+DriveType, data=train)
+summary(huber1)
+```
+
+Testing Both Models
+Huber Graph
+```{r}
+pred3 <- predict(huber1, test)
+results_huber = data.frame(pred = exp(pred3), actual = test$Price)
+
+ggplot(results_huber, aes(x=pred,y=actual))+
+  geom_point()+xlab("Predicted")+ylab("Observed")+
+  geom_abline(intercept=0,slope=1,col="red")
+```
+
+
+Comparing the models using RMSE (Root mean Squared Error)
+```{r}
+rmse_model2 <- sqrt(mean((results$actual - results$pred)^2))
+rmse_huber <- sqrt(mean((results_huber$actual - results_huber$pred)^2))
+
+print(rmse_model2)
+print(rmse_huber)
+```
+
+
+Numerical-Only Model
+```{r}
+benz7 <- benz6 %>%
+  select(c(FuelConsumption,Kilometers,Age,Power,Price))
+
+set.seed(1)
+sample <- sample(c(TRUE,FALSE), nrow(benz6), replace=TRUE, prob=c(0.7,0.3))
+train <- benz7[sample,]
+test <- benz7[!sample,]
+```
+
+```{r}
+model_numerical <- lm(data=train, log(Price) ~ .)
+summary(model_numerical)
+```
+Diagnostics
+```{r}
+plot(model_numerical)
+```
+Get rid of observations 332,355,347
+```{r}
+train_ref <- train %>% slice(-c(337,356))
+```
+
+```{r}
+model_numerical2 <- lm(data=train_ref, log(Price) ~ .)
+summary(model_numerical2)
+plot(model_numerical2)
+```
+
+Analysis
+```{r}
+pred5 <- predict(model_numerical2, test)
+results_num2 = data.frame(pred = exp(pred5), actual = test$Price)
+
+ggplot(results_num2, aes(x=pred,y=actual))+
+  geom_point()+xlab("Predicted")+ylab("Observed")+
+  geom_abline(intercept=0,slope=1,col="red")
+```
+
+```{r}
+rmse_numerical <- sqrt(mean((results_num2$actual - results_num2$pred)^2))
+
+print(rmse_numerical)
+```
+
+Fitting a Ridge Regression
+```{r}
+library(MASS)
+library(glmnet)
+
+X = as.matrix(train[,-5])
+Y = as.matrix(log(train[,5]))
+
+cv.ridge <- cv.glmnet(X,Y,alpha=0)
+model.ridge <- glmnet(X,Y,lambda=cv.ridge$lambda.min, alpha=0, nfolds=5)
+cv.lasso <- cv.glmnet(X,Y,alpha=1)
+model.lasso <- glmnet(X,Y,lambda=cv.lasso$lambda.min, alpha=0, nfolds=5)
+```
+
+```{r}
+model.ridge$beta
+model.lasso$beta
+```
+```{r}
+pred_ridge <- predict(model.ridge, as.matrix(test[,-5]))[,1]
+results_ridge <- data.frame(pred = exp(pred_ridge), actual = test$Price)
+
+ggplot(results_ridge, aes(x=pred,y=actual))+
+  geom_point()+xlab("Predicted")+ylab("Observed")+
+  geom_abline(intercept=0,slope=1,col="red")
+```
+```{r}
+rmse_ridge <- sqrt(mean((results_ridge$actual - results_ridge$pred)^2))
+
+print(rmse_ridge)
+```
+
+
+```{r}
+pred_lasso <- predict(model.lasso, as.matrix(test[,-5]))[,1]
+results_lasso <- data.frame(pred = exp(pred_lasso), actual = test$Price)
+
+ggplot(results_lasso, aes(x=pred,y=actual))+
+  geom_point()+xlab("Predicted")+ylab("Observed")+
+  geom_abline(intercept=0,slope=1,col="red")
+
+
+rmse_lasso <- sqrt(mean((results_lasso$actual - results_lasso$pred)^2))
+print(rmse_lasso)
+```
+
+
+
